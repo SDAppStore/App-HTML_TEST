@@ -1,0 +1,7 @@
+[
+  {
+    "icon": "files/icon.svg",
+    "display_name": "HTML Test",
+    "launch_path": "index.html"
+  }
+]
