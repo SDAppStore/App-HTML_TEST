@@ -1,0 +1,405 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cefrium Test Game</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #101218;
+            color: #e8eaf0;
+            font-family: Arial, sans-serif;
+            overscroll-behavior: none;
+        }
+
+        h1 {
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        #hud {
+            display: flex;
+            gap: 24px;
+            margin: 12px;
+            font-size: 18px;
+        }
+
+        canvas {
+            display: block;
+            width: min(90vw, 480px);
+            height: auto;
+            border: 2px solid #414657;
+            border-radius: 8px;
+            background: #171b25;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        button {
+            margin-top: 16px;
+            padding: 12px 24px;
+            border: 0;
+            border-radius: 8px;
+            background: #3978f6;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #2865dc;
+        }
+
+        p {
+            color: #aeb4c4;
+            text-align: center;
+            line-height: 1.6;
+        }
+
+        #message {
+            min-height: 24px;
+            margin-top: 8px;
+            color: #8ab4ff;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Dodge the Blocks</h1>
+
+    <div id="hud">
+        <span>Score: <strong id="score">0</strong></span>
+        <span>Best: <strong id="best">0</strong></span>
+    </div>
+
+    <canvas id="game" width="480" height="560"></canvas>
+
+    <div id="message">Press Start to play!</div>
+
+    <button id="start">Start Game</button>
+
+    <p>
+        Desktop: A / D or arrow keys.<br>
+        Mobile: Drag the blue player left or right.
+    </p>
+
+    <script>
+        const canvas = document.getElementById("game");
+        const ctx = canvas.getContext("2d");
+
+        const scoreElement = document.getElementById("score");
+        const bestElement = document.getElementById("best");
+        const messageElement = document.getElementById("message");
+        const startButton = document.getElementById("start");
+
+        const WIDTH = canvas.width;
+        const HEIGHT = canvas.height;
+
+        const player = {
+            x: WIDTH / 2 - 18,
+            y: HEIGHT - 65,
+            width: 36,
+            height: 36,
+            speed: 5
+        };
+
+        let blocks = [];
+        let keys = {};
+        let score = 0;
+        let best = 0;
+        let running = false;
+        let spawnTimer = 0;
+        let lastTime = 0;
+        let animationId = null;
+
+        // Touch and pointer dragging.
+        let dragging = false;
+        let activePointerId = null;
+        let dragOffsetX = 0;
+
+        try {
+            best = Number(localStorage.getItem("cefrium_best") || 0);
+        } catch (error) {
+            best = 0;
+        }
+
+        bestElement.textContent = best;
+
+        function canvasX(event) {
+            const rect = canvas.getBoundingClientRect();
+            return (event.clientX - rect.left) * WIDTH / rect.width;
+        }
+
+        function canvasY(event) {
+            const rect = canvas.getBoundingClientRect();
+            return (event.clientY - rect.top) * HEIGHT / rect.height;
+        }
+
+        canvas.addEventListener("pointerdown", function (event) {
+            if (!running || dragging) return;
+
+            const x = canvasX(event);
+            const y = canvasY(event);
+
+            // Start dragging only when touching/clicking the player.
+            if (
+                x >= player.x &&
+                x <= player.x + player.width &&
+                y >= player.y &&
+                y <= player.y + player.height
+            ) {
+                dragging = true;
+                activePointerId = event.pointerId;
+                dragOffsetX = x - player.x;
+
+                canvas.setPointerCapture(event.pointerId);
+                event.preventDefault();
+            }
+        });
+
+        canvas.addEventListener("pointermove", function (event) {
+            if (!dragging || event.pointerId !== activePointerId) {
+                return;
+            }
+
+            player.x = canvasX(event) - dragOffsetX;
+
+            player.x = Math.max(
+                0,
+                Math.min(WIDTH - player.width, player.x)
+            );
+
+            event.preventDefault();
+        });
+
+        function stopDragging(event) {
+            if (event.pointerId !== activePointerId) return;
+
+            dragging = false;
+            activePointerId = null;
+        }
+
+        canvas.addEventListener("pointerup", stopDragging);
+        canvas.addEventListener("pointercancel", stopDragging);
+        canvas.addEventListener("lostpointercapture", function () {
+            dragging = false;
+            activePointerId = null;
+        });
+
+        document.addEventListener("keydown", function (event) {
+            if (["ArrowLeft", "ArrowRight", " "].includes(event.key)) {
+                event.preventDefault();
+            }
+
+            keys[event.key.toLowerCase()] = true;
+        });
+
+        document.addEventListener("keyup", function (event) {
+            keys[event.key.toLowerCase()] = false;
+        });
+
+        window.addEventListener("blur", function () {
+            keys = {};
+            dragging = false;
+            activePointerId = null;
+        });
+
+        startButton.addEventListener("click", startGame);
+
+        function startGame() {
+            if (animationId !== null) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+
+            player.x = WIDTH / 2 - player.width / 2;
+            blocks = [];
+            keys = {};
+            score = 0;
+            spawnTimer = 0;
+            lastTime = 0;
+            dragging = false;
+            activePointerId = null;
+            running = true;
+
+            scoreElement.textContent = score;
+            messageElement.textContent = "Good luck!";
+            startButton.textContent = "Restart Game";
+
+            animationId = requestAnimationFrame(gameLoop);
+        }
+
+        function spawnBlock() {
+            const size = 20 + Math.random() * 30;
+
+            blocks.push({
+                x: Math.random() * (WIDTH - size),
+                y: -size,
+                width: size,
+                height: size,
+                speed: 2 + Math.random() * 2 + score * 0.025
+            });
+        }
+
+        function intersects(a, b) {
+            return (
+                a.x < b.x + b.width &&
+                a.x + a.width > b.x &&
+                a.y < b.y + b.height &&
+                a.y + a.height > b.y
+            );
+        }
+
+        function update(delta) {
+            const step = Math.min(delta / 16.67, 2);
+
+            if (!dragging) {
+                if (keys["arrowleft"] || keys["a"]) {
+                    player.x -= player.speed * step;
+                }
+
+                if (keys["arrowright"] || keys["d"]) {
+                    player.x += player.speed * step;
+                }
+            }
+
+            player.x = Math.max(
+                0,
+                Math.min(WIDTH - player.width, player.x)
+            );
+
+            spawnTimer += delta;
+
+            const spawnInterval = Math.max(250, 850 - score * 5);
+
+            if (spawnTimer >= spawnInterval) {
+                spawnTimer = 0;
+                spawnBlock();
+            }
+
+            for (let i = blocks.length - 1; i >= 0; i--) {
+                const block = blocks[i];
+
+                block.y += block.speed * step;
+
+                if (intersects(player, block)) {
+                    endGame();
+                    return;
+                }
+
+                if (block.y > HEIGHT) {
+                    blocks.splice(i, 1);
+                    score++;
+                    scoreElement.textContent = score;
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+            ctx.strokeStyle = "#242a38";
+            ctx.lineWidth = 1;
+
+            for (let x = 0; x < WIDTH; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, HEIGHT);
+                ctx.stroke();
+            }
+
+            for (let y = 0; y < HEIGHT; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(WIDTH, y);
+                ctx.stroke();
+            }
+
+            // Blue player.
+            ctx.fillStyle = "#3978f6";
+            ctx.fillRect(
+                player.x,
+                player.y,
+                player.width,
+                player.height
+            );
+
+            // Falling red blocks.
+            ctx.fillStyle = "#ff4d5a";
+
+            for (const block of blocks) {
+                ctx.fillRect(
+                    block.x,
+                    block.y,
+                    block.width,
+                    block.height
+                );
+            }
+
+            // Green dot indicates the game is running.
+            ctx.fillStyle = running ? "#52d68a" : "#aeb4c4";
+            ctx.beginPath();
+            ctx.arc(14, 14, 5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function endGame() {
+            running = false;
+            dragging = false;
+            activePointerId = null;
+
+            if (score > best) {
+                best = score;
+                bestElement.textContent = best;
+
+                try {
+                    localStorage.setItem("cefrium_best", String(best));
+                } catch (error) {
+                    // Storage might be unavailable in an embedded browser.
+                }
+            }
+
+            messageElement.textContent = "Game over! Score: " + score;
+            startButton.textContent = "Play Again";
+        }
+
+        function gameLoop(timestamp) {
+            if (!running) {
+                draw();
+                animationId = null;
+                return;
+            }
+
+            const delta = lastTime === 0 ? 16.67 : timestamp - lastTime;
+            lastTime = timestamp;
+
+            update(delta);
+            draw();
+
+            if (running) {
+                animationId = requestAnimationFrame(gameLoop);
+            } else {
+                animationId = null;
+                draw();
+            }
+        }
+
+        draw();
+    </script>
+</body>
+</html>
